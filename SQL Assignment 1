@@ -1,0 +1,89 @@
+# THE LOOK ECOMMERCE CASE STUDY
+# OVERVIEW DATASET
+TheLook is a fictitious eCommerce clothing site developed by the Looker team. The dataset contains information about customers, products, orders, logistics, web events and digital marketing campaigns. The contents of this dataset are synthetic, and are provided to industry practitioners for the purpose of product discovery, testing, and evaluation.
+#ASK 
+1. Create a query to get the total users who completed the order and total orders per month
+
+SELECT format_date('%Y-%m', date_trunc(delivered_at, month)) as Year_Month, 
+       count(distinct user_id) as Total_Users, 
+       count(order_id) as Total_Orders
+FROM `bigquery-public-data.thelook_ecommerce.order_items` 
+WHERE status = 'Complete' and delivered_at between '2019-01-01' and '2022-04-30'
+GROUP BY Year_Month
+ORDER BY Year_Month
+LIMIT 1000
+
+2. Create a query to get average order value and total number of unique users grouped by month
+
+SELECT format_date('%Y-%m', date_trunc(delivered_at, month)) as Year_Month, 
+       round(sum(sale_price)/count(order_id),2) as AOV, 
+       count(distinct user_id) as Distinct_Users
+FROM `bigquery-public-data.thelook_ecommerce.order_items` 
+WHERE status = 'Complete' and delivered_at between '2019-01-01' and '2022-04-30'
+GROUP BY Year_Month
+ORDER BY Year_Month
+LIMIT 1000
+
+3. Find the first and last name of users from the youngest and oldest age of each gender
+
+With CTE as(
+       Select gender as Gender,
+       age as Age,
+       First_name,
+       Last_name
+FROM `bigquery-public-data.thelook_ecommerce.users`
+INNER JOIN(SELECT Min(age) y, Max(age) z FROM `bigquery-public-data.thelook_ecommerce.users`) a
+ON a.y = age 
+OR a.z = age 
+GROUP BY gender, age
+LIMIT 10)
+SELECT *,
+CASE WHEN age = max(age) over() then 'Oldest_age'
+     WHEN age = min(age) over() then 'Youngest_age' else 'null'
+     END AS Youngest_or_Oldest_age
+FROM CTE 
+ORDER BY Gender, Age
+
+4. Get the top 5 most profitable product and its profit detail breakdown by month
+
+With CTESalesCost as (
+       SELECT format_date('%Y-%m', date_trunc(a.delivered_at, month)) as Year_Month, 
+              a.product_id as Product_Id,
+              b.product_name as Product_Name,
+              round(sum(a.sale_price),2) as Sales,
+              round(sum(b.cost),2) as Cost
+       FROM `bigquery-public-data.thelook_ecommerce.order_items` a
+       LEFT JOIN `bigquery-public-data.thelook_ecommerce.inventory_items` b
+       ON a.product_id = b.product_id
+       WHERE a.status = 'Complete'
+       GROUP BY year_month, product_id, product_name), 
+CTEProfit as (
+       SELECT *, sales-cost as Profit
+       FROM CTESalesCost
+       GROUP BY year_month, product_id, product_name, sales, cost, profit)
+SELECT *,
+FROM  (SELECT CTEProfit.*,
+       DENSE_RANK() OVER(PARTITION BY year_month ORDER BY profit DESC) as Rank_per_Month
+       FROM CTEProfit)
+WHERE rank_per_month <= 5
+ORDER BY year_month
+
+5. Create a query to get Month to Date of total Revenue in each product categories of past 3 months (Current date 15 April 2022), breakdown by date
+
+With DateCategories as (
+       SELECT cast(a.delivered_at as date) as Date,
+       b.product_category as Product_Categories,
+       a.sale_price as sale_price
+FROM `bigquery-public-data.thelook_ecommerce.order_items` a
+LEFT JOIN `bigquery-public-data.thelook_ecommerce.inventory_items` b
+ON a.product_id = b.product_id
+WHERE status = 'Complete' and (a.delivered_at between '2022-02-01' and '2022-02-15') 
+       or (a.delivered_at between '2022-03-01' and '2022-03-15')
+       or (a.delivered_at between '2022-04-01' and '2022-04-15')),
+RevenueMTD as (
+       SELECT Date, Product_Categories, 
+       ROUND(sum(sale_price) over(partition by product_categories order by date),2) as Revenue
+       FROM DateCategories)
+SELECT *,
+FROM RevenueMTD
+ORDER BY Product_Categories, Date
