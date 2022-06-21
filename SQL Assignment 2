@@ -1,0 +1,81 @@
+# THE LOOK ECOMMERCE DATA BIGQUERY
+
+# OVERVIEW DATASET
+TheLook is a fictitious eCommerce clothing site developed by the Looker team. The dataset contains information about customers, products, orders, 
+logistics, web events and digital marketing campaigns. The contents of this dataset are synthetic, and are provided to industry practitioners for 
+the purpose of product discovery, testing, and evaluation.
+
+# ASK
+
+1. Find monthly growth of TPO (# of completed orders) and TPV (# of Revenue) in percentage breakdown. After analyzing the monthly growth, is there
+   any interesting insight that we can get?
+   
+Code:
+With MonthCategories as (
+       Select b.product_category as Categories,
+              format_date('%Y-%m', date_trunc(a.delivered_at, month)) as Month,
+              count(a.order_id) as order_id,
+              sum(a.sale_price) as sale_price
+       FROM `bigquery-public-data.thelook_ecommerce.order_items` a
+       LEFT JOIN `bigquery-public-data.thelook_ecommerce.inventory_items` b
+       ON a.product_id = b.product_id
+       WHERE status = 'Complete' and (a.delivered_at between '2019-01-01' and '2022-04-30')
+       GROUP BY Categories, month
+       ORDER BY Categories),
+GrowthRate as (
+       SELECT Categories, Month,
+              (order_id-lag(order_id,1) over(partition by Categories order by Month Desc))/
+              (lag(order_id,1) over(partition by Categories order by Month Desc)) as Order_Growth,
+              (sale_price-lag(sale_price,1) over(partition by Categories order by Month Desc))/
+              (lag(sale_price,1) over(partition by Categories order by Month Desc)) as Revenue_Growth
+       FROM MonthCategories)
+SELECT Categories, Month, 
+       ifnull(round(order_growth,2),0) as OrderGrowth,
+       ifnull(round(revenue_growth,2),0) as RevenueGrowth
+FROM GrowthRate
+ORDER BY Categories
+
+Analysis:
+
+
+2. Create monthly retention cohorts (the groups, or cohorts, can be defined based upon the date that a user purchased a product) and how many of them
+   coming back for the following months in 2019-2022. After analyzing the retention cohorts, is there any interesting insight that we can get?
+
+Code:
+With cohort_items as (
+       SELECT min(date(date_trunc(created_at, month))) as cohort_month,
+              user_id
+       FROM `bigquery-public-data.thelook_ecommerce.order_items`
+       GROUP BY user_id),
+user_activities as (
+       SELECT a.user_id as user_id,
+              DATE_DIFF(date(date_trunc(a.created_at, month)), b.cohort_month, month) as month_number
+       FROM `bigquery-public-data.thelook_ecommerce.order_items` a
+       LEFT JOIN cohort_items b on a.user_id = b.user_id
+       WHERE extract(year from b.cohort_month) in (2019,2020,2021,2022)
+       GROUP BY 1, 2),
+cohort_size as (
+       SELECT cohort_month,
+              count(1) as num_users
+       FROM cohort_items
+       GROUP BY 1
+       ORDER BY 1),
+retention_table as (
+       SELECT c.cohort_month,
+              a.month_number,
+              COUNT(1) as num_users
+       FROM user_activities A
+       LEFT JOIN cohort_items c ON a.user_id = c.user_id
+       GROUP BY 1, 2)
+SELECT
+  B.cohort_month,
+  S.num_users as total_users,
+  B.month_number,
+  B.num_users as total_users2,
+  cast(B.num_users as decimal)/ S.num_users as percentage
+FROM retention_table B
+LEFT JOIN cohort_size S ON B.cohort_month = S.cohort_month
+WHERE B.cohort_month IS NOT NULL
+ORDER BY 1, 3
+
+Analysis: 
